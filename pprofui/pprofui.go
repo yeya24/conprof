@@ -25,9 +25,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/conprof/conprof/internal/pprof/driver"
+	"github.com/conprof/conprof/internal/pprof/plugin"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
-	"github.com/google/pprof/driver"
 	"github.com/google/pprof/profile"
 	"github.com/julienschmidt/httprouter"
 	"github.com/pkg/errors"
@@ -111,7 +112,7 @@ func (p *pprofUI) PprofView(w http.ResponseWriter, r *http.Request, _ httprouter
 		return
 	}
 
-	server := func(args *driver.HTTPServerArgs) error {
+	server := func(args *plugin.HTTPServerArgs) error {
 		handler, ok := args.Handlers[remainingPath]
 		if !ok {
 			return errors.Errorf("unknown endpoint %s", remainingPath)
@@ -137,7 +138,7 @@ func (p *pprofUI) PprofView(w http.ResponseWriter, r *http.Request, _ httprouter
 	// that simply reads the profile we downloaded earlier, and a
 	// HTTPServer that pprof will pass the web ui handlers to at the
 	// end (and we let it handle this client request).
-	if err := driver.PProf(&driver.Options{
+	if err := driver.PProf(&plugin.Options{
 		Flagset: &pprofFlags{
 			FlagSet: pflag.NewFlagSet("pprof", pflag.ExitOnError),
 			args: []string{
