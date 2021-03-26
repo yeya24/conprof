@@ -1,6 +1,9 @@
 package api
 
 import (
+	"github.com/gogo/protobuf/proto"
+	"github.com/golang/snappy"
+	"github.com/prometheus/prometheus/prompb"
 	"net/http"
 
 	"github.com/go-kit/kit/log"
@@ -106,5 +109,27 @@ func (r *ProtoRenderer) Render(w http.ResponseWriter) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+type RemoteReadRenderer struct {
+	resp *prompb.ReadResponse
+}
+
+func NewRemoteReadRenderer(resp *prompb.ReadResponse) *RemoteReadRenderer {
+	return &RemoteReadRenderer{resp: resp}
+}
+
+func (r *RemoteReadRenderer) Render(w http.ResponseWriter) error {
+	data, err := proto.Marshal(r.resp)
+	if err != nil {
+		return err
+	}
+
+	compressed := snappy.Encode(nil, data)
+	if _, err := w.Write(compressed); err != nil {
+		return err
+	}
+
 	return nil
 }

@@ -9,6 +9,7 @@ require (
 	github.com/go-kit/kit v0.10.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/gogo/status v1.0.3
+	github.com/golang/snappy v0.0.2
 	github.com/google/pprof v0.0.0-20201117184057-ae444373da19
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639

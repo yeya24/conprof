@@ -16,6 +16,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/conprof/conprof/remoteread"
+	"github.com/gogo/protobuf/proto"
+	"github.com/golang/snappy"
+	"github.com/prometheus/prometheus/prompb"
+	"io"
+	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
@@ -154,6 +160,7 @@ func (a *API) Routes() http.Handler {
 	if a.db != nil {
 		r.GET(path.Join(a.prefix, "/query_range"), instr("query_range", a.QueryRange))
 		r.GET(path.Join(a.prefix, "/query"), instr("query", a.Query))
+		r.POST(path.Join(a.prefix, "/read"), instr("remote_read", a.RemoteRead))
 		r.GET(path.Join(a.prefix, "/series"), instr("series", a.Series))
 		r.GET(path.Join(a.prefix, "/labels"), instr("label_names", a.LabelNames))
 		r.GET(path.Join(a.prefix, "/label/:name/values"), instr("label_values", a.LabelValues))
@@ -407,6 +414,87 @@ func (a *API) DiffProfiles(r *http.Request) (*profile.Profile, *ApiError) {
 	}
 
 	return p, nil
+}
+
+const decodeReadLimit = 32 * 1024 * 1024
+
+// DecodeReadRequest reads a remote.Request from a http.Request.
+func DecodeReadRequest(r *http.Request) (*prompb.ReadRequest, error) {
+	compressed, err := ioutil.ReadAll(io.LimitReader(r.Body, decodeReadLimit))
+	if err != nil {
+		return nil, err
+	}
+
+	reqBuf, err := snappy.Decode(nil, compressed)
+	if err != nil {
+		return nil, err
+	}
+
+	var req prompb.ReadRequest
+	if err := proto.Unmarshal(reqBuf, &req); err != nil {
+		return nil, err
+	}
+
+	return &req, nil
+}
+
+// FromLabelMatchers parses protobuf label matchers to Prometheus label matchers.
+func FromLabelMatchers(matchers []*prompb.LabelMatcher) ([]*labels.Matcher, error) {
+	result := make([]*labels.Matcher, 0, len(matchers))
+	for _, matcher := range matchers {
+		var mtype labels.MatchType
+		switch matcher.Type {
+		case prompb.LabelMatcher_EQ:
+			mtype = labels.MatchEqual
+		case prompb.LabelMatcher_NEQ:
+			mtype = labels.MatchNotEqual
+		case prompb.LabelMatcher_RE:
+			mtype = labels.MatchRegexp
+		case prompb.LabelMatcher_NRE:
+			mtype = labels.MatchNotRegexp
+		default:
+			return nil, errors.New("invalid matcher type")
+		}
+		matcher, err := labels.NewMatcher(mtype, matcher.Name, matcher.Value)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, matcher)
+	}
+	return result, nil
+}
+
+func (a *API) RemoteRead(r *http.Request) (interface{}, []error, *ApiError) {
+	req, err := DecodeReadRequest(r)
+	if err != nil {
+		return nil, nil, &ApiError{Err: err}
+	}
+
+	resp := &prompb.ReadResponse{
+		Results: make([]*prompb.QueryResult, len(req.Queries)),
+	}
+
+	for j, query := range req.Queries {
+		q, err := a.db.Querier(r.Context(), query.StartTimestampMs, query.EndTimestampMs)
+		if err != nil {
+			return nil, nil, &ApiError{Err: err}
+		}
+
+		m, err := FromLabelMatchers(query.Matchers)
+		if err != nil {
+			return nil, nil, &ApiError{Err: err}
+		}
+
+		s := q.Select(false, nil, m...)
+
+		ts, err := remoteread.Convert(s)
+		if err != nil {
+			return nil, nil, &ApiError{Err: err}
+		}
+		resp.Results[j] = &prompb.QueryResult{Timeseries: ts}
+	}
+
+	return NewRemoteReadRenderer(resp), nil, nil
 }
 
 func (a *API) Query(r *http.Request) (interface{}, []error, *ApiError) {
