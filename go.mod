@@ -4,17 +4,20 @@ go 1.15
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1
+	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/conprof/db v0.0.0-20210317165925-a59fb33c527d
-	github.com/cortexproject/cortex v1.5.1-0.20201111110551-ba512881b076
+	github.com/cortexproject/cortex v1.6.1-0.20210204145131-7dac81171c66
 	github.com/go-kit/kit v0.10.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/gogo/status v1.0.3
 	github.com/google/pprof v0.0.0-20201117184057-ae444373da19
-	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
+	github.com/grafana/loki v1.6.2-0.20210311134304-a27c79913c43
+	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.1-0.20191002090509-6af20e3a5340
 	github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/oklog/run v1.1.0
 	github.com/opentracing/opentracing-go v1.2.0
+	github.com/pierrec/lz4 v2.5.3-0.20200429092203-e876bbd321b3+incompatible // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.9.0
 	github.com/prometheus/common v0.15.0
@@ -29,7 +32,7 @@ require (
 	go.opentelemetry.io/otel v0.15.0
 	go.opentelemetry.io/otel/exporters/otlp v0.15.0
 	go.opentelemetry.io/otel/sdk v0.15.0
-	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
+	golang.org/x/net v0.0.0-20201224014010-6772e930b67b
 	google.golang.org/grpc v1.34.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/yaml.v2 v2.4.0
@@ -41,3 +44,5 @@ replace k8s.io/client-go => k8s.io/client-go v0.19.4
 
 // We can't upgrade to grpc 1.30.0 until go.etcd.io/etcd will support it.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
+
+replace github.com/hashicorp/consul => github.com/hashicorp/consul v1.8.1

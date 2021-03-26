@@ -130,9 +130,10 @@ func (w *Web) Run(_ context.Context, reloadCh chan struct{}) error {
 		conprofapi.WithMaxMergeBatchSize(w.maxMergeBatchSize),
 		conprofapi.WithReloadChannel(reloadCh),
 		conprofapi.WithTargets(w.targets),
-		conprofapi.WithPrefix(apiPrefix),
+		conprofapi.WithLogQLEngine(),
 	)
 	w.mux.Handle(apiPrefix, api.Routes())
+	w.mux.Handle("/loki/api/v1/", api.LokiRoutes())
 
 	if w.reloaders != nil {
 		w.reloaders.Register(api.ApplyConfig)

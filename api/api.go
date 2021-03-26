@@ -16,6 +16,8 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/conprof/conprof/pkg/logql_querier"
+	"github.com/grafana/loki/pkg/logql"
 	"math"
 	"net"
 	"net/http"
@@ -79,6 +81,7 @@ type API struct {
 	targets           func(context.Context) TargetRetriever
 	globalURLOptions  GlobalURLOptions
 	prefix            string
+	logqlEngine       *logql.Engine
 
 	mu     sync.RWMutex
 	config *config.Config
@@ -144,6 +147,18 @@ func WithReloadChannel(reloadCh chan struct{}) Option {
 	}
 }
 
+func WithLogQLEngine() Option {
+	engineOpts := logql.EngineOpts{Timeout: 5 * time.Minute, MaxLookBackPeriod: 30 * time.Second}
+
+	return func(a *API) {
+		a.logqlEngine = logql.NewEngine(
+			engineOpts,
+			logql_querier.NewQuerier(a.db),
+			nil,
+		)
+	}
+}
+
 // Routes returns a http.Handler containing all routes of the API so that it can be mounted into a mux.
 func (a *API) Routes() http.Handler {
 	r := httprouter.New()
@@ -164,6 +179,21 @@ func (a *API) Routes() http.Handler {
 
 	r.GET(path.Join(a.prefix, "/targets"), instr("targets", a.Targets))
 
+	return r
+}
+
+// Routes returns a http.Handler containing all routes of the API so that it can be mounted into a mux.
+func (a *API) LokiRoutes() http.Handler {
+	r := httprouter.New()
+	r.RedirectTrailingSlash = false
+	// TODO
+	ins := extpromhttp.NewInstrumentationMiddleware(nil)
+	instr := Instr(a.logger, ins)
+
+	r.GET("/loki/api/v1/query_range", instr("logs", a.LokiQueryRange))
+	r.GET("/loki/api/v1/label", instr("loki_label_names", a.LokiLabelNames))
+	r.GET("/loki/api/v1/label/:name/values", instr("loki_label_values", a.LokiLabelValues))
+	r.GET("/loki/api/v1/series", instr("loki_series", a.LokiSeries))
 	return r
 }
 

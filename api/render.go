@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/grafana/loki/pkg/logql"
+	"github.com/grafana/loki/pkg/logql/marshal"
 	"net/http"
 
 	"github.com/go-kit/kit/log"
@@ -107,4 +109,16 @@ func (r *ProtoRenderer) Render(w http.ResponseWriter) error {
 		return err
 	}
 	return nil
+}
+
+type LokiResponseRenderer struct {
+	res logql.Result
+}
+
+func NewLokiResponseRenderer(res logql.Result) *LokiResponseRenderer {
+	return &LokiResponseRenderer{res: res}
+}
+
+func (r *LokiResponseRenderer) Render(w http.ResponseWriter) error {
+	return marshal.WriteQueryResponseJSON(r.res, w)
 }
