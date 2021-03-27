@@ -17,9 +17,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/conprof/conprof/internal/pprof/report"
+	"github.com/conprof/db/storage/remote"
+	"github.com/gogo/protobuf/proto"
+	"github.com/golang/snappy"
+	config_util "github.com/prometheus/common/config"
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/prompb"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -99,25 +107,26 @@ var (
 	)
 )
 
-func init() {
-	prometheus.MustRegister(targetIntervalLength)
-	prometheus.MustRegister(targetReloadIntervalLength)
-	prometheus.MustRegister(targetSyncIntervalLength)
-	prometheus.MustRegister(targetScrapePoolSyncsCounter)
-	prometheus.MustRegister(targetScrapeSampleLimit)
-	prometheus.MustRegister(targetScrapeSampleDuplicate)
-	prometheus.MustRegister(targetScrapeSampleOutOfOrder)
-	prometheus.MustRegister(targetScrapeSampleOutOfBounds)
-}
+//func init() {
+//	prometheus.MustRegister(targetIntervalLength)
+//	prometheus.MustRegister(targetReloadIntervalLength)
+//	prometheus.MustRegister(targetSyncIntervalLength)
+//	prometheus.MustRegister(targetScrapePoolSyncsCounter)
+//	prometheus.MustRegister(targetScrapeSampleLimit)
+//	prometheus.MustRegister(targetScrapeSampleDuplicate)
+//	prometheus.MustRegister(targetScrapeSampleOutOfOrder)
+//	prometheus.MustRegister(targetScrapeSampleOutOfBounds)
+//}
 
 // scrapePool manages scrapes for sets of targets.
 type scrapePool struct {
 	appendable Appendable
 	logger     log.Logger
 
-	mtx    sync.RWMutex
-	config *config.ScrapeConfig
-	client *http.Client
+	mtx          sync.RWMutex
+	config       *config.ScrapeConfig
+	client       *http.Client
+	remoteClient remote.WriteClient
 	// Targets and loops must always be synchronized to have the same
 	// set of hashes.
 	activeTargets  map[uint64]*Target
@@ -142,6 +151,9 @@ func newScrapePool(cfg *config.ScrapeConfig, app Appendable, logger log.Logger) 
 
 	buffers := pool.New(1e3, 100e6, 3, func(sz int) interface{} { return make([]byte, 0, sz) })
 
+	u, _ := url.Parse("http://localhost:9090/api/v1/write")
+	rc, err := remote.NewWriteClient("rc", &remote.ClientConfig{Timeout: model.Duration(time.Second * 5),
+		URL: &config_util.URL{URL: u}})
 	ctx, cancel := context.WithCancel(context.Background())
 	sp := &scrapePool{
 		cancel:        cancel,
@@ -160,6 +172,7 @@ func newScrapePool(cfg *config.ScrapeConfig, app Appendable, logger log.Logger) 
 			log.With(logger, "target", t),
 			buffers,
 			app,
+			rc,
 		)
 	}
 
@@ -431,6 +444,7 @@ type scrapeLoop struct {
 	buffers        *pool.Pool
 
 	appendable Appendable
+	rc         remote.WriteClient
 
 	ctx       context.Context
 	scrapeCtx context.Context
@@ -444,6 +458,7 @@ func newScrapeLoop(ctx context.Context,
 	l log.Logger,
 	buffers *pool.Pool,
 	appendable Appendable,
+	rc remote.WriteClient,
 ) *scrapeLoop {
 	if l == nil {
 		l = log.NewNopLogger()
@@ -459,10 +474,27 @@ func newScrapeLoop(ctx context.Context,
 		stopped:    make(chan struct{}),
 		l:          l,
 		ctx:        ctx,
+		rc:         rc,
 	}
 	sl.scrapeCtx, sl.cancel = context.WithCancel(ctx)
 
 	return sl
+}
+
+// labelsToLabelsProto transforms labels into prompb labels. The buffer slice
+// will be used to avoid allocations if it is big enough to store the labels.
+func labelsToLabelsProto(labels labels.Labels, buf []prompb.Label) []prompb.Label {
+	result := buf[:0]
+	if cap(buf) < len(labels) {
+		result = make([]prompb.Label, 0, len(labels))
+	}
+	for _, l := range labels {
+		result = append(result, prompb.Label{
+			Name:  l.Name,
+			Value: l.Value,
+		})
+	}
+	return result
 }
 
 func (sl *scrapeLoop) run(interval, timeout time.Duration, errc chan<- error) {
@@ -516,6 +548,10 @@ mainLoop:
 
 		if scrapeErr == nil {
 			b = buf.Bytes()
+			p, _ := profile.ParseData(b)
+			r := report.NewDefault(p, report.Options{})
+			ti, _ := report.TextItems(r)
+			req := &prompb.WriteRequest{Timeseries: make([]prompb.TimeSeries, 0, 1)}
 			// NOTE: There were issues with misbehaving clients in the past
 			// that occasionally returned empty results. We don't want those
 			// to falsely reset our buffer size.
@@ -529,8 +565,27 @@ mainLoop:
 			sort.Sort(tl)
 			level.Debug(sl.l).Log("msg", "appending new sample", "labels", tl.String())
 
+			req.Timeseries = append(req.Timeseries, prompb.TimeSeries{
+				Labels:  labelsToLabelsProto(tl, nil),
+				Samples: make([]prompb.Sample, 0, len(ti)),
+			})
+			for _, t := range ti {
+				req.Timeseries[0].Samples = append(req.Timeseries[0].Samples, prompb.Sample{Timestamp: timestamp.FromTime(start), Value: float64(t.Cum)})
+			}
+			data, err := proto.Marshal(req)
+			if err != nil {
+				errc <- err
+			}
+
+			out := make([]byte, len(data))
+			compressed := snappy.Encode(out, data)
+			err = sl.rc.Store(sl.ctx, compressed)
+			if err != nil {
+				errc <- err
+			}
+
 			app := sl.appendable.Appender(sl.ctx)
-			_, err := app.Add(tl, timestamp.FromTime(start), buf.Bytes())
+			_, err = app.Add(tl, timestamp.FromTime(start), buf.Bytes())
 			if err != nil && errc != nil {
 				level.Debug(sl.l).Log("err", err)
 				errc <- err
