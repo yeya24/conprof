@@ -79,9 +79,10 @@ func runApi(
 		conprofapi.WithDB(db),
 		conprofapi.WithMaxMergeBatchSize(maxMergeBatchSize),
 		conprofapi.WithPrefix(apiPrefix),
+		conprofapi.WithLogQLEngine(),
 	)
 	mux.Handle(apiPrefix, api.Routes())
-
+	mux.Handle("/loki/api/v1/", api.LokiRoutes())
 	probe.Ready()
 
 	return nil
